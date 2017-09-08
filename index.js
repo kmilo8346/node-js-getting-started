@@ -1,7 +1,28 @@
-var https                   = require('https');
-var url                     = require('url');
-var slackHookRequestOptions = getSlackHookRequestOptions();
-module.exports.sendToSlack  = sendToSlack;
+var express = require('express');
+var bodyParser = require('body-parser');
+var url = require('url');
+var https = require('https');
+var app = express();
+
+app.set('port', (process.env.PORT || 5000));
+
+app.use(express.static(__dirname + '/public'));
+app.use(bodyParser.urlencoded({
+    extended: false
+}));
+// parse application/json
+app.use(bodyParser.json());
+
+// views is directory for all template files
+app.set('views', __dirname + '/views');
+app.set('view engine', 'ejs');
+
+app.get('/', function(request, response) {
+  response.render('pages/index');
+});
+
+
+// send to slack
 
 function getSlackHookRequestOptions()
 {
@@ -15,55 +36,19 @@ function getSlackHookRequestOptions()
     };
 }
 
-function sendToSlack(parsedRequest, callback)
+function convertToSlackMessage(body)
 {
-        if (!parsedRequest || (parsedRequest.body||'').trim()=='') {
-            callback(true);
-            return;
-        }
-
-        var error           = false;
-        var slackMessage    = convertToSlackMessage(parsedRequest.body, parsedRequest.channel);
-        var req             = https.request(slackHookRequestOptions);
-
-        req.on('error', function(e) {
-            console.error(e);
-            error = true;
-        });
-
-        req.on('close', function() { callback(error); } );
-
-        req.write(slackMessage);
-        req.end();
-}
-
-function convertToSlackMessage(body, channel)
-{
-    var parsedBody  = trParseBody(body);
-    var success     = (parsedBody.status=='success' && parsedBody.complete);
+    var parsedBody  = body || {
+        status: 'failed',
+        complete: false
+    };
+    var success     = (parsedBody.status === 'success' && parsedBody.complete);
     return JSON.stringify({
         username:   getSlackUserName(parsedBody, success),
         icon_emoji: success ? ':shipit:' : ':warning:',
         text:       getSlackText(parsedBody),
-        channel:    channel || '#apppechera'
+        channel:    '#apppechera'
     });
-}
-
-function trParseBody(body)
-{
-    try
-    {
-        return JSON.parse(body) || {
-            status: 'failed',
-            complete: false
-        };
-    } catch(err) {
-        console.error(err);
-        return {
-            status: err,
-            complete: false
-        };
-    }
 }
 
 function getSlackUserName(parsedBody, success)
@@ -99,3 +84,29 @@ function getSlackText(parsedBody)
 
     );
 }
+
+app.post('/send-slack', function(req, resp) {
+    var error           = false;
+    var slackMessage    = convertToSlackMessage(req.body);
+    var request             = https.request(getSlackHookRequestOptions());
+
+    request.on('error', function(e) {
+        console.error(e);
+        error = true;
+        resp.send('BAD');
+    });
+
+    request.on('close', function() {
+        if (error) {
+            resp.send('BAD');
+        } else {
+            resp.send('OK');
+        }
+    } );
+
+    request.write(slackMessage);
+    request.end();
+});
+app.listen(app.get('port'), function() {
+  console.log('Node app is running on port', app.get('port'));
+});
